@@ -1,0 +1,65 @@
+<launch>
+	<!-- global rosparam -->
+	<param name="use_sim_time" value="true"/>
+
+	<!-- rosbag -->
+	<node pkg="rosbag" type="play" name="player" args="--clock /home/amsl/ozaki/bagfiles/airsim/Neighborhood/drone_1cam_lidar_noisedimu_202008290246.bag"/>
+
+	<!-- msg conversion -->
+	<node pkg="msg_conversion" type="ned_to_neu" name="ned_to_neu">
+		<remap from="/odom" to="/airsim_node/drone/odom_local_ned"/>
+		<!-- <remap from="/imu/data" to="/airsim_node/drone/imu/Imu"/> -->
+		<remap from="/imu/data" to="/airsim_node/drone/imu/Imu/with_noise"/>
+		<!-- <param name="parent_frame_id" type="string" value="/odom"/> -->
+		<!-- <param name="child_frame_id" type="string" value="/odom/neu"/> -->
+	</node>
+
+	<!-- Rotation matrix -->
+	<node pkg="imu_ekf" type="imu_ekf_rpy" name ="imu_ekf_rpy_rotmatrix">
+		<remap from="/imu/data" to="/imu/data/neu"/>
+		<remap from="/ekf/quat_rpy" to="/ekf/rotmatrix/quat_rpy"/>
+		<param name="wait_inipose" type="bool" value="false"/>
+		<param name="use_quaternion_for_rotation" type="bool" value="false"/>
+		<!-- <param name="frame_id" type="string" value="/base_link"/> -->
+		<!-- <param name="sigma_ini" type="double" value="1.0e&#45;10"/> -->
+		<!-- <param name="sigma_pre" type="double" value="1.0e&#45;4"/> -->
+		<param name="sigma_obs" type="double" value="1.0e+3"/>
+	</node>
+	<!-- Quaternion -->
+	<node pkg="imu_ekf" type="imu_ekf_rpy" name ="imu_ekf_rpy_quaternion">
+		<remap from="/imu/data" to="/imu/data/neu"/>
+		<remap from="/ekf/quat_rpy" to="/ekf/quaternion/quat_rpy"/>
+		<param name="wait_inipose" type="bool" value="false"/>
+		<param name="use_quaternion_for_rotation" type="bool" value="true"/>
+		<!-- <param name="frame_id" type="string" value="/base_link"/> -->
+		<!-- <param name="sigma_ini" type="double" value="1.0e&#45;10"/> -->
+		<!-- <param name="sigma_pre" type="double" value="1.0e&#45;4"/> -->
+		<param name="sigma_obs" type="double" value="1.0e+3"/>
+	</node>
+
+	<!-- msg conversion -->
+	<node pkg="msg_conversion" name="odometry_to_rpy" type="odometry_to_rpy">
+		<remap from="/odom" to="/odom/neu"/>
+		<remap from="/rpy" to="/gt/rpy"/>
+	</node>
+	<node pkg="msg_conversion" type="quatstamped_to_rpy" name="quatstamped_to_rpy_rotmatrix">
+		<remap from="/quat" to="/ekf/rotmatrix/quat_rpy"/>
+		<remap from="/rpy" to="/ekf/rotmatrix/rpy"/>
+	</node>
+	<node pkg="msg_conversion" type="quatstamped_to_rpy" name="quatstamped_to_rpy_quaternion">
+		<remap from="/quat" to="/ekf/quaternion/quat_rpy"/>
+		<remap from="/rpy" to="/ekf/quaternion/rpy"/>
+	</node>
+
+	<!-- validation -->
+	<param name="erase_old_data" type="bool" value="False"/>
+	<param name="/num_sub" type="int" value="2"/>
+	<param name="/ylim" type="double" value="45"/>
+	<param name="/method0" type="str" value="RotationMatrix"/>
+	<param name="/method1" type="str" value="Quaternion"/>
+	<node pkg="msg_printer" type="compare_rp_multi_methods.py" name="compare_rp_multi_methods" output="screen">
+		<remap from="/truth/rpy" to="/gt/rpy"/>
+		<remap from="/estimation0/rpy" to="/ekf/rotmatrix/rpy"/>
+		<remap from="/estimation1/rpy" to="/ekf/quaternion/rpy"/>
+	</node>
+</launch>

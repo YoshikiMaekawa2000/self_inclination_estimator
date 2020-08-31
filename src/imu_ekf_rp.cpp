@@ -15,25 +15,27 @@ class ImuEKFRPY{
 		ros::Subscriber _sub_imu;
 		ros::Subscriber _sub_bias;
 		/*publisher*/
-		ros::Publisher _pub_quat;
+		ros::Publisher _pub_rp;
+		ros::Publisher _pub_rpy;
 		/*state*/
-		Eigen::Vector3d _x;	//(roll, pitch, yaw)
-		Eigen::Matrix3d _P;
+		Eigen::Vector2d _x;	//(roll, pitch)
+		Eigen::Matrix2d _P;
+		/*time*/
+		ros::Time _stamp_imu_last;
 		/*bias*/
 		sensor_msgs::Imu _bias;
+		/*yaw*/
+		double _yaw = 0.0;
 		/*flag*/
 		bool _got_inipose = false;
 		bool _got_first_imu = false;
 		bool _got_bias = false;
 		/*parameter*/
 		bool _wait_inipose;
-		bool _use_quaternion_for_rotation;
 		std::string _frame_id;
 		double _sigma_ini;
 		double _sigma_pre;
 		double _sigma_obs;
-		/*test*/
-		sensor_msgs::Imu _imu_last;
 
 	public:
 		ImuEKFRPY();
@@ -44,19 +46,19 @@ class ImuEKFRPY{
 		void predictionIMU(sensor_msgs::Imu imu, double dt);
 		void observationIMU(sensor_msgs::Imu g);
 		void publication(ros::Time stamp);
-		void getRotMatrixRPY(double r, double p, Eigen::MatrixXd& Rot);
+		void estimateYaw(sensor_msgs::Imu imu, double dt);
+		void getRotMatrixRP(double r, double p, Eigen::MatrixXd& Rot);
+		void getRotMatrixY(double r, double p, Eigen::MatrixXd& Rot);
 		void anglePiToPi(double& angle);
 };
 
 ImuEKFRPY::ImuEKFRPY()
 	: _nhPrivate("~")
 {
-	std::cout << "--- imu_ekf_rpy ---" << std::endl;
+	std::cout << "--- imu_ekf_rp ---" << std::endl;
 	/*parameter*/
 	_nhPrivate.param("wait_inipose", _wait_inipose, false);
 	std::cout << "_wait_inipose = " << (bool)_wait_inipose << std::endl;
-	_nhPrivate.param("use_quaternion_for_rotation", _use_quaternion_for_rotation, true);
-	std::cout << "_use_quaternion_for_rotation = " << (bool)_use_quaternion_for_rotation << std::endl;
 	_nhPrivate.param("frame_id", _frame_id, std::string("/base_link"));
 	std::cout << "_frame_id = " << _frame_id << std::endl;
 	_nhPrivate.param("sigma_ini", _sigma_ini, 1.0e-10);
@@ -70,15 +72,16 @@ ImuEKFRPY::ImuEKFRPY()
 	_sub_imu = _nh.subscribe("/imu/data", 1, &ImuEKFRPY::callbackIMU, this);
 	_sub_bias = _nh.subscribe("/imu/bias", 1, &ImuEKFRPY::callbackBias, this);
 	/*pub*/
-	_pub_quat = _nh.advertise<geometry_msgs::QuaternionStamped>("/ekf/quat_rpy", 1);
+	_pub_rp = _nh.advertise<geometry_msgs::QuaternionStamped>("/ekf/quat_rp", 1);
+	_pub_rpy = _nh.advertise<geometry_msgs::QuaternionStamped>("/ekf/quat_rpy", 1);
 	/*initialize*/
 	initializeState();
 }
 
 void ImuEKFRPY::initializeState(void)
 {
-	_x = Eigen::Vector3d::Zero();
-	_P = _sigma_ini*Eigen::Matrix3d::Identity();
+	_x = Eigen::Vector2d::Zero();
+	_P = _sigma_ini*Eigen::Matrix2d::Identity();
 
 	if(!_wait_inipose)	_got_inipose = true;
 
@@ -95,8 +98,7 @@ void ImuEKFRPY::callbackIniPose(const geometry_msgs::QuaternionStampedConstPtr& 
 		tf::Matrix3x3(q).getRPY(r, p, y);
 		_x <<
 			r,
-			p,
-			y;
+			p;
 		_got_inipose = true;
 	} 
 }
@@ -107,19 +109,21 @@ void ImuEKFRPY::callbackIMU(const sensor_msgs::ImuConstPtr& msg)
 	if(!_got_inipose)	return;
 	/*skip first callback*/
 	if(!_got_first_imu){
-		_imu_last = *msg;
+		_stamp_imu_last = msg->header.stamp;
 		_got_first_imu = true;
 		return;
 	}
 	/*get dt*/
 	double dt;
 	try{
-		dt = (msg->header.stamp - _imu_last.header.stamp).toSec();
+		dt = (msg->header.stamp - _stamp_imu_last).toSec();
 	}
 	catch(std::runtime_error& ex) {
 		ROS_ERROR("Exception: [%s]", ex.what());
 		return;
 	}
+	/*(estimate yaw)*/
+	estimateYaw(*msg, dt);
 	/*prediction*/
 	predictionIMU(*msg, dt);
 	/*observation*/
@@ -127,7 +131,7 @@ void ImuEKFRPY::callbackIMU(const sensor_msgs::ImuConstPtr& msg)
 	/*publication*/
 	publication(msg->header.stamp);
 	/*reset*/
-	_imu_last = *msg;
+	_stamp_imu_last = msg->header.stamp;
 }
 
 void ImuEKFRPY::callbackBias(const sensor_msgs::ImuConstPtr& msg)
@@ -142,14 +146,10 @@ void ImuEKFRPY::predictionIMU(sensor_msgs::Imu imu, double dt)
 {
 	/*u*/
 	Eigen::Vector3d u;
-	// u <<
-	// 	imu.angular_velocity.x*dt,
-	// 	imu.angular_velocity.y*dt,
-	// 	imu.angular_velocity.z*dt;
 	u <<
-		(imu.angular_velocity.x + _imu_last.angular_velocity.x)*dt/2.0,
-		(imu.angular_velocity.y + _imu_last.angular_velocity.y)*dt/2.0,
-		(imu.angular_velocity.z + _imu_last.angular_velocity.z)*dt/2.0;
+		imu.angular_velocity.x*dt,
+		imu.angular_velocity.y*dt,
+		imu.angular_velocity.z*dt;
 	if(_got_bias){
 		Eigen::Vector3d b;
 		b <<
@@ -159,30 +159,15 @@ void ImuEKFRPY::predictionIMU(sensor_msgs::Imu imu, double dt)
 		u = u - b;
 	}
 	/*f*/
-	Eigen::VectorXd f(_x.size());
-	if(_use_quaternion_for_rotation){
-		tf::Quaternion q_pose = tf::createQuaternionFromRPY(_x(0), _x(1), _x(2));
-		tf::Quaternion q_rel_rot = tf::createQuaternionFromRPY(u(0), u(1), u(2));
-		q_pose = q_pose*q_rel_rot;
-		q_pose.normalize();
-		tf::Matrix3x3(q_pose).getRPY(f(0), f(1), f(2));
-	}
-	else{
-		Eigen::MatrixXd Rot(_x.size(), u.size());
-		getRotMatrixRPY(_x(0), _x(1), Rot);
-		f = _x + Rot*u;
-	}
+	Eigen::MatrixXd Rot(_x.size(), u.size());
+	getRotMatrixRP(_x(0), _x(1), Rot);
+	Eigen::VectorXd f = _x + Rot*u;
 	/*jF*/
 	Eigen::MatrixXd jF(_x.size(), _x.size());
 	jF(0, 0) = 1 + u(1)*cos(_x(0))*tan(_x(1)) - u(2)*sin(_x(0))*tan(_x(1));
 	jF(0, 1) = u(1)*sin(_x(0))/cos(_x(1))/cos(_x(1)) + u(2)*cos(_x(0))/cos(_x(1))/cos(_x(1));
-	jF(0, 2) = 0;
 	jF(1, 0) = -u(1)*sin(_x(0)) - u(2)*cos(_x(0));
 	jF(1, 1) = 1;
-	jF(1, 2) = 0;
-	jF(2, 0) = u(1)*cos(_x(0))/cos(_x(1)) - u(2)*sin(_x(0))/cos(_x(1));
-	jF(2, 1) = u(1)*sin(_x(0))*sin(_x(1))/cos(_x(1))/cos(_x(1)) + u(2)*cos(_x(0))*sin(_x(1))/cos(_x(1))/cos(_x(1));
-	jF(2, 2) = 1;
 	/*Q*/
 	Eigen::MatrixXd Q = _sigma_pre*Eigen::MatrixXd::Identity(_x.size(), _x.size());
 	/*Update*/
@@ -194,16 +179,12 @@ void ImuEKFRPY::predictionIMU(sensor_msgs::Imu imu, double dt)
 
 void ImuEKFRPY::observationIMU(sensor_msgs::Imu imu)
 {
-	/*
 	std::cout << "- observationIMU -" << std::endl;
 	std::cout
 		<< "r[deg]: " << _x(0)/M_PI*180.0
 		<< ", "
 		<< "p[deg]: " << _x(1)/M_PI*180.0
-		<< ", "
-		<< "y[deg]: " << _x(2)/M_PI*180.0
 	<< std::endl;
-	*/
 	/*z*/
 	Eigen::Vector3d z(
 		-imu.linear_acceleration.x,
@@ -223,9 +204,9 @@ void ImuEKFRPY::observationIMU(sensor_msgs::Imu imu)
 	/*jH*/
 	Eigen::MatrixXd jH(z.size(), _x.size());
 	jH <<
-		0,							-g*cos(_x(1)),				0,
-		g*cos(_x(0))*cos(_x(1)),	-g*sin(_x(0))*sin(_x(1)),	0,
-		-g*sin(_x(0))*cos(_x(1)),	-g*cos(_x(0))*sin(_x(1)),	0;
+		0.0,						-g*cos(_x(1)),
+		g*cos(_x(0))*cos(_x(1)),	-g*sin(_x(0))*sin(_x(1)),
+		-g*sin(_x(0))*cos(_x(1)),	-g*cos(_x(0))*sin(_x(1));
 	/*R*/
 	Eigen::MatrixXd R = _sigma_obs*Eigen::MatrixXd::Identity(z.size(), z.size());
 	/*I*/
@@ -243,8 +224,18 @@ void ImuEKFRPY::observationIMU(sensor_msgs::Imu imu)
 
 void ImuEKFRPY::publication(ros::Time stamp)
 {
+	/*RP*/
+	tf::Quaternion q_rp = tf::createQuaternionFromRPY(_x(0), _x(1), 0.0);
+	geometry_msgs::QuaternionStamped q_rp_msg;
+	q_rp_msg.header.frame_id = _frame_id;
+	q_rp_msg.header.stamp = stamp;
+	q_rp_msg.quaternion.x = q_rp.x();
+	q_rp_msg.quaternion.y = q_rp.y();
+	q_rp_msg.quaternion.z = q_rp.z();
+	q_rp_msg.quaternion.w = q_rp.w();
+	_pub_rp.publish(q_rp_msg);
 	/*RPY*/
-	tf::Quaternion q_rpy = tf::createQuaternionFromRPY(_x(0), _x(1), _x(2));
+	tf::Quaternion q_rpy = tf::createQuaternionFromRPY(_x(0), _x(1), _yaw);
 	geometry_msgs::QuaternionStamped q_rpy_msg;
 	q_rpy_msg.header.frame_id = _frame_id;
 	q_rpy_msg.header.stamp = stamp;
@@ -252,16 +243,44 @@ void ImuEKFRPY::publication(ros::Time stamp)
 	q_rpy_msg.quaternion.y = q_rpy.y();
 	q_rpy_msg.quaternion.z = q_rpy.z();
 	q_rpy_msg.quaternion.w = q_rpy.w();
-	_pub_quat.publish(q_rpy_msg);
+	_pub_rpy.publish(q_rpy_msg);
 	/*print*/
-	// std::cout << "r[deg]: " << _x(0) << " p[deg]: " << _x(1) << "y[deg]: " << _x(2) << std::endl;
+	// std::cout << "r[deg]: " << _x(0) << " p[deg]: " << _x(1) << std::endl;
 }
 
-void ImuEKFRPY::getRotMatrixRPY(double r, double p, Eigen::MatrixXd& Rot)
+void ImuEKFRPY::estimateYaw(sensor_msgs::Imu imu, double dt)
+{
+	/*u*/
+	Eigen::Vector3d u;
+	u <<
+		imu.angular_velocity.x*dt,
+		imu.angular_velocity.y*dt,
+		imu.angular_velocity.z*dt;
+	if(_got_bias){
+		Eigen::Vector3d b;
+		b <<
+			_bias.angular_velocity.x*dt,
+			_bias.angular_velocity.y*dt,
+			_bias.angular_velocity.z*dt;
+		u = u - b;
+	}
+	/*f*/
+	Eigen::MatrixXd Rot(1, u.size());
+	getRotMatrixY(_x(0), _x(1), Rot);
+	_yaw = _yaw + (Rot*u)[0];
+	anglePiToPi(_yaw);
+}
+
+void ImuEKFRPY::getRotMatrixRP(double r, double p, Eigen::MatrixXd& Rot)
 {
 	Rot <<
 		1,	sin(r)*tan(p),	cos(r)*tan(p),
-		0,	cos(r),			-sin(r),
+		0,	cos(r),			-sin(r);
+}
+
+void ImuEKFRPY::getRotMatrixY(double r, double p, Eigen::MatrixXd& Rot)
+{
+	Rot <<
 		0,	sin(r)/cos(p),	cos(r)/cos(p);
 }
 
@@ -272,9 +291,9 @@ void ImuEKFRPY::anglePiToPi(double& angle)
 
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "imu_ekf_rpy");
+    ros::init(argc, argv, "imu_ekf_rp");
 	
-	ImuEKFRPY imu_ekf_rpy;
+	ImuEKFRPY imu_ekf_rp;
 
 	ros::spin();
 }

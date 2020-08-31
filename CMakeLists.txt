@@ -191,5 +191,8 @@ include_directories(
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
 #
+add_executable(imu_ekf_rp src/imu_ekf_rp.cpp)
+target_link_libraries(imu_ekf_rp ${catkin_LIBRARIES})
+#
 add_executable(imu_ekf_rpy src/imu_ekf_rpy.cpp)
 target_link_libraries(imu_ekf_rpy ${catkin_LIBRARIES})
