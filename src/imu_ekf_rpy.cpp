@@ -171,6 +171,8 @@ void ImuEKFRPY::predictionIMU(sensor_msgs::Imu imu, double dt)
 		Eigen::MatrixXd Rot(_x.size(), u.size());
 		getRotMatrixRPY(_x(0), _x(1), Rot);
 		f = _x + Rot*u;
+		/*-pi to pi*/
+		for(int i=0; i<f.size(); ++i)	anglePiToPi(f(i));
 	}
 	/*jF*/
 	Eigen::MatrixXd jF(_x.size(), _x.size());
@@ -188,8 +190,6 @@ void ImuEKFRPY::predictionIMU(sensor_msgs::Imu imu, double dt)
 	/*Update*/
 	_x = f;
 	_P = jF*_P*jF.transpose() + Q;
-	/*-pi to pi*/
-	for(int i=0;i<_x.size();++i)	anglePiToPi(_x(i));
 }
 
 void ImuEKFRPY::observationIMU(sensor_msgs::Imu imu)
