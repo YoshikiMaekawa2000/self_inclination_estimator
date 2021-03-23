@@ -3,8 +3,7 @@
 	<param name="use_sim_time" value="true"/>
 
 	<!-- rosbag -->
-	<!-- <node pkg="rosbag" type="play" name="player" args="&#45;&#45;clock /home/amsl/ozaki/bagfiles/airsim/Neighborhood/drone_1cam_202008020251.bag"/> -->
-	<node pkg="rosbag" type="play" name="player" args="--clock /home/amsl/ozaki/bagfiles/airsim/Neighborhood/drone_1cam_lidar_noisedimu_202008290246.bag"/>
+	<node pkg="rosbag" type="play" name="player" args="--clock /home/amsl/ozaki/bagfiles/airsim/Neighborhood/drone_1cam_lidar_noisedimu_202011221752.bag"/>
 	<!-- <node pkg="rosbag" type="play" name="player" args="&#45;&#45;clock /home/amsl/ozaki/bagfiles/airsim/SoccerField/drone_1cam_lidar_noisedimu_202008301203.bag"/> -->
 
 	<!-- msg conversion -->
@@ -26,7 +25,7 @@
 		<param name="sigma_obs" type="double" value="1.0e+3"/>
 	</node>
 
-	<!-- validation -->
+	<!-- msg conversion -->
 	<node pkg="msg_conversion" name="odometry_to_rpy" type="odometry_to_rpy">
 		<remap from="/odom" to="/odom/neu"/>
 		<remap from="/rpy" to="/gt/rpy"/>
@@ -35,9 +34,16 @@
 		<remap from="/quat" to="/ekf/quat_rp"/>
 		<remap from="/rpy" to="/ekf/rpy"/>
 	</node>
-	<param name="erase_old_data" type="bool" value="False"/>
-	<node pkg="msg_printer" name="compare_rp" type="compare_rp.py">
+
+	<!-- evaluation -->
+	<param name="erase_old_data" type="bool" value="True"/>
+	<param name="save_csv" type="bool" value="True"/>
+	<param name="/num_sub" type="int" value="1"/>
+	<param name="/method0" type="str" value="Gyro+Acc"/>
+	<param name="/method1" type="str" value="Gyro"/>
+	<node pkg="msg_printer" type="compare_rp_with_gt.py" name="compare_rp_with_gt" output="screen">
 		<remap from="/truth/rpy" to="/gt/rpy"/>
-		<remap from="/estimation/rpy" to="/ekf/rpy"/>
+		<remap from="/estimation0/rpy" to="/ekf/rpy"/>
+		<remap from="/estimation1/rpy" to="/gyrodometry/rpy"/>
 	</node>
 </launch>

@@ -1,0 +1,61 @@
+<launch>
+	<!-- global rosparam -->
+	<param name="use_sim_time" value="true"/>
+
+	<!-- rosbag -->
+	<node pkg="rosbag" type="play" name="player" args="--clock /home/amsl/ozaki/bagfiles/stick_vlp32imu4cam/with_vicon/20201213_183636.bag"/>
+
+	<!-- MAIN -->
+	<node pkg="imu_ekf" name="imu_ekf_rp" type="imu_ekf_rp" output="screen">
+		<param name="wait_inipose" type="bool" value="false"/>
+		<!-- <param name="frame_id" type="string" value="/base_link"/> -->
+		<!-- <param name="sigma_ini" type="double" value="1.0e&#45;10"/> -->
+		<!-- <param name="sigma_pre" type="double" value="1.0e&#45;4"/> -->
+		<param name="sigma_obs" type="double" value="1.0e+0"/>
+	</node>
+
+	<!-- compared approaches -->
+	<node pkg="gyrodometry" name="gyrodometry3d" type="gyrodometry3d">
+		<param name="wait_inipose" type="bool" value="false"/>
+	</node>
+
+	<!-- msg conversion -->
+	<node pkg="msg_conversion" type="tf_to_posestamped" name="tf_to_posestamped">
+		<param name="parent_frame_id" type="string" value="/world"/>
+		<param name="child_frame_id" type="string" value="/vicon/sensors/sensors"/>
+	</node>
+	<node pkg="msg_conversion" type="posestamped_reset_origin" name="posestamped_reset_origin">
+		<remap from="/pose" to="/tf_to_posestamped"/>
+		<param name="parent_frame_id" type="string" value="/world"/>
+		<param name="child_frame_id" type="string" value="/tf_to_posestamped/reset"/>
+	</node>
+	<node pkg="msg_conversion" name="posestamped_to_rpy" type="posestamped_to_rpy">
+		<remap from="/pose" to="/pose/reset_origin"/>
+		<remap from="/rpy" to="/gt/rpy"/>
+	</node>
+	<node pkg="msg_conversion" name="quatstamped_to_rpy" type="quatstamped_to_rpy">
+		<remap from="/quat" to="/ekf/quat_rpy"/>
+		<remap from="/rpy" to="/ekf/rpy"/>
+	</node>
+	<node pkg="msg_conversion" type="odometry_to_rpy" name="gyrodometry_to_rpy">
+		<remap from="/odom" to="/gyrodometry"/>
+		<remap from="/rpy" to="/gyrodometry/rpy"/>
+	</node>
+	<node pkg="msg_conversion" type="imu_to_rpy" name="imu_to_rpy">
+		<remap from="/rpy" to="/imu/rpy"/>
+	</node>
+
+	<!-- evaluation -->
+	<param name="erase_old_data" type="bool" value="True"/>
+	<param name="save_csv" type="bool" value="True"/>
+	<param name="/num_sub" type="int" value="3"/>
+	<param name="/method0" type="str" value="Gyro+Acc"/>
+	<param name="/method1" type="str" value="Gyro"/>
+	<param name="/method2" type="str" value="IMU"/>
+	<node pkg="msg_printer" type="compare_rp_with_gt.py" name="compare_rp_with_gt" output="screen">
+		<remap from="/truth/rpy" to="/gt/rpy"/>
+		<remap from="/estimation0/rpy" to="/ekf/rpy"/>
+		<remap from="/estimation1/rpy" to="/gyrodometry/rpy"/>
+		<remap from="/estimation2/rpy" to="/imu/rpy"/>
+	</node>
+</launch>
