@@ -1,16 +1,20 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(imu_ekf)
 
-add_compile_options(-std=c++11 -O2 -g -Wall)
+# add_compile_options(-std=c++11 -O2 -g -Wall)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
+
+set(Eigen3_DIR "/usr/include/eigen3")
+find_package(Eigen3 REQUIRED COMPONENTS system)
+
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
-  Eigen3
+  # Eigen3
 )
 
 ## System dependencies are found with CMake's conventions
